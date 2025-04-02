@@ -82,6 +82,9 @@ class Picker {
   /// Show pickers in reversed order
   final bool reversedOrder;
 
+  ///当value的数量不一致时，是否要更新前面的列
+  final bool updatePre;
+
   /// Generate a custom header， [hideHeader] = true
   final WidgetBuilder? builderHeader;
 
@@ -129,7 +132,7 @@ class Picker {
       this.confirm,
       this.cancelText,
       this.confirmText,
-      this.backgroundColor,
+      this.backgroundColor = Colors.white,
       this.containerColor,
       this.headerColor,
       this.builderHeader,
@@ -150,7 +153,8 @@ class Picker {
       this.onSelect,
       this.onConfirmBefore,
       this.onConfirm,
-      this.printDebug = false}) {
+      this.printDebug = false,
+      this.updatePre = false}) {
     this.selecteds = selecteds == null ? <int>[] : selecteds;
   }
 
@@ -217,22 +221,15 @@ class Picker {
           return builder == null ? picker : builder(context, picker);
         });
   }
-    
-  /// get widget
-  Widget getWidget(BuildContext context) {
-    return builder == null ? picker : builder(context, picker);
-  }
 
   /// show dialog picker
   Future<List<int>?> showDialog(BuildContext context,
       {bool barrierDismissible = true,
       Color? backgroundColor,
-      Color? barrierColor,
       PickerWidgetBuilder? builder,
       Key? key}) {
     return Dialog.showDialog<List<int>>(
         context: context,
-        barrierColor: barrierColor,
         barrierDismissible: barrierDismissible,
         builder: (BuildContext context) {
           final actions = <Widget>[];
@@ -372,6 +369,7 @@ class _PickerWidget<T> extends StatefulWidget {
 class PickerWidgetState<T> extends State<_PickerWidget> {
   final Picker picker;
   final ThemeData? themeData;
+  int yearPreSelectIndex = 0;
   PickerWidgetState({required this.picker, this.themeData});
 
   ThemeData? theme;
@@ -433,7 +431,7 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
                   bottom: BorderSide(color: theme!.dividerColor, width: 0.5),
                 ),
                 color: picker.headerColor == null
-                    ? theme?.bottomAppBarTheme.color
+                    ? (theme!.bottomAppBarColor)
                     : picker.headerColor,
               ),
         ));
@@ -486,7 +484,7 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
       child: picker.title == null
           ? SizedBox()
           : DefaultTextStyle(
-              style: theme!.textTheme.titleLarge?.copyWith(
+              style: theme!.textTheme.headline6?.copyWith(
                     fontSize: Picker.DefaultTextSize,
                   ) ??
                   TextStyle(fontSize: Picker.DefaultTextSize),
@@ -548,13 +546,13 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
     PickerAdapter? adapter = picker.adapter;
     adapter.setColumn(-1);
 
-    final _decoration = BoxDecoration(
-      color: picker.containerColor == null
-          ? theme!.dialogBackgroundColor
-          : picker.containerColor,
-    );
-
     if (adapter.length > 0) {
+      var _decoration = BoxDecoration(
+        color: picker.containerColor == null
+            ? theme!.dialogBackgroundColor
+            : picker.containerColor,
+      );
+
       for (int i = 0; i < picker._maxLevel; i++) {
         Widget view = Expanded(
           flex: adapter.getColumnFlex(i),
@@ -613,12 +611,7 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
       for (int i = 0; i < picker.delimiter!.length; i++) {
         var o = picker.delimiter![i];
         if (o.child == null) continue;
-        var item = SizedBox(
-            child: DecoratedBox(
-              decoration: _decoration,
-              child: o.child,
-            ),
-            height: picker.height);
+        var item = SizedBox(child: o.child, height: picker.height);
         if (o.column < 0)
           items.insert(0, item);
         else if (o.column >= items.length)
@@ -664,6 +657,7 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
             scrollController[j].jumpTo(0.0);
           }
         }
+
         if (picker.onSelect != null)
           picker.onSelect!(picker, i, picker.selecteds);
 
@@ -682,6 +676,25 @@ class PickerWidgetState<T> extends State<_PickerWidget> {
               if (j == i) continue;
               adapter.setColumn(j - 1);
               _keys[j]?.call(() => null);
+            }
+          }
+          if (picker.updatePre) {
+            if (i == 0) {
+              DateTime todayDate = DateTime.now();
+              int monthIndex = todayDate.month;
+              int currentMonthIndex = picker.selecteds[1];
+              int newMonthIndex = currentMonthIndex;
+              if (yearPreSelectIndex == 0 && index != 0) {
+                newMonthIndex = currentMonthIndex + monthIndex - 1;
+              } else if (yearPreSelectIndex != 0 && index == 0) {
+                newMonthIndex = currentMonthIndex - monthIndex + 1;
+                if (newMonthIndex < 0) {
+                  newMonthIndex = 0;
+                }
+              }
+              picker.selecteds[1] = newMonthIndex;
+              scrollController[1].jumpToItem(newMonthIndex);
+              yearPreSelectIndex = index;
             }
           }
         }
@@ -727,9 +740,6 @@ abstract class PickerAdapter<T> {
   }
 
   Widget makeText(Widget? child, String? text, bool isSel) {
-    final theme = picker!.textStyle != null || picker!.state?.context == null
-        ? null
-        : Theme.of(picker!.state!.context);
     return Center(
         child: DefaultTextStyle(
             overflow: TextOverflow.ellipsis,
@@ -737,12 +747,13 @@ abstract class PickerAdapter<T> {
             textAlign: picker!.textAlign,
             style: picker!.textStyle ??
                 TextStyle(
-                    color: theme?.brightness == Brightness.dark
-                        ? Colors.white
-                        : Colors.black87,
-                    fontFamily: theme == null
-                        ? ""
-                        : theme.textTheme.titleLarge?.fontFamily,
+                    color: Colors.black87,
+                    fontFamily: picker?.state?.context != null
+                        ? Theme.of(picker!.state!.context)
+                            .textTheme
+                            .headline6!
+                            .fontFamily
+                        : "",
                     fontSize: Picker.DefaultTextSize),
             child: child != null
                 ? (isSel && picker!.selectedIconTheme != null
@@ -763,11 +774,8 @@ abstract class PickerAdapter<T> {
     items.add(
         child ?? Text(text, style: (isSel ? picker!.selectedTextStyle : null)));
     if (suffix != null) items.add(suffix);
-    final theme = picker!.textStyle != null || picker!.state?.context == null
-        ? null
-        : Theme.of(picker!.state!.context);
-    Color? _txtColor =
-        theme?.brightness == Brightness.dark ? Colors.white : Colors.black87;
+
+    Color? _txtColor = Colors.black87;
     double? _txtSize = Picker.DefaultTextSize;
     if (isSel && picker!.selectedTextStyle != null) {
       if (picker!.selectedTextStyle!.color != null)
@@ -776,18 +784,14 @@ abstract class PickerAdapter<T> {
         _txtSize = picker!.selectedTextStyle!.fontSize;
     }
 
-    return Center(
+    return new Center(
+        //alignment: Alignment.center,
         child: DefaultTextStyle(
             overflow: TextOverflow.ellipsis,
             maxLines: 1,
             textAlign: picker!.textAlign,
             style: picker!.textStyle ??
-                TextStyle(
-                    color: _txtColor,
-                    fontSize: _txtSize,
-                    fontFamily: theme == null
-                        ? ""
-                        : theme.textTheme.titleLarge?.fontFamily),
+                TextStyle(color: _txtColor, fontSize: _txtSize),
             child: Wrap(
               children: items,
             )));
@@ -1290,10 +1294,8 @@ class DateTimePickerAdapter extends PickerAdapter<DateTime> {
       _columnType = columnType[type];
     var month = _columnType.indexWhere((element) => element == 1);
     var day = _columnType.indexWhere((element) => element == 2);
-    if (month != -1 && day != -1) {
-      _needUpdatePrev = day < month ||
-          day < _columnType.indexWhere((element) => element == 0);
-    }
+    _needUpdatePrev =
+        day < month || day < _columnType.indexWhere((element) => element == 0);
     if (!_needUpdatePrev) {
       // check am/pm before hour-ap
       var ap = _columnType.indexWhere((element) => element == 6);
